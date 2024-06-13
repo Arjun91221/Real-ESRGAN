@@ -38,7 +38,7 @@ async def checkfacestraight(image_path):
 
     # Check if faces are found
     if len(faces) == 0:
-        return False , "Face is not clear."
+        return False , "Human face is not clear."
 
     # Define acceptable tilt angle range (in degrees)
     acceptable_tilt_angle = 90 # Adjust this value as needed
