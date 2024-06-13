@@ -144,13 +144,11 @@ async def upscale_endpoint(file: UploadFile = File(None), url: str = Form(None))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error downloading image: {str(e)}")
 
-    face_validation = await checkfacestraight(image_path)
+    is_straight, res = await checkfacestraight(image_path)
 
     os.remove(image_path)
 
-    print(face_validation)
-
-    return face_validation
+    return is_straight, res
 
 
 if __name__ == "__main__":

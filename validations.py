@@ -34,11 +34,11 @@ async def checkfacestraight(image_path):
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=20, minSize=(30, 30))
 
     if len(faces) > 1:
-        return "Multiple faces detected."
+        return False , "Multiple faces detected."
 
     # Check if faces are found
     if len(faces) == 0:
-        return "Face is not clear."
+        return False , "Face is not clear."
 
     # Define acceptable tilt angle range (in degrees)
     acceptable_tilt_angle = 90 # Adjust this value as needed
@@ -118,7 +118,7 @@ async def checkfacestraight(image_path):
         # if acceptable_eye_angle_range[0] <= eye_angle <= acceptable_eye_angle_range[1]:
         #     return "Please, upload a straight human face"
         # else:
-        return "The face is straight."
+        return True , "The face is straight."
 
 
         # Expand the cropping region to include the hair, cap, or turban
