@@ -6,8 +6,10 @@ from basicsr.archs.rrdbnet_arch import RRDBNet
 from gfpgan import GFPGANer
 import requests
 import cv2
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import StreamingResponse, FileResponse
+import aiohttp
+from validations import checkfacestraight
 
 app = FastAPI()
 
@@ -51,28 +53,12 @@ def load_models_esrgan():
         bg_upsampler=upsampler)
 
 def upscale_image(image_path):
-    if image_path.startswith("http://") or image_path.startswith("https://"):
-        response = requests.get(image_path)
-
-        if response.status_code == 200:
-            # Save the image to a temporary file
-            temp_file_path = str(uuid.uuid4()) + ".png"
-            with open(temp_file_path, "wb") as temp_file:
-                temp_file.write(response.content)
-        else:
-            print(f"Failed to download the image. Status code: {response.status_code}")
-            return
-    else:
-        # Assume the input is a local file path
-        temp_file_path = image_path
-
     if upsampler is None or face_enhancer is None:
         load_models_esrgan()
 
-    imgname, extension = os.path.splitext(os.path.basename(temp_file_path))
-    print('Testing', imgname)
+    imgname, extension = os.path.splitext(os.path.basename(image_path))
 
-    img = cv2.imread(temp_file_path, cv2.IMREAD_UNCHANGED)
+    img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
 
     if len(img.shape) == 3 and img.shape[2] == 4:
         img_mode = 'RGBA'
@@ -103,18 +89,29 @@ def upscale_image(image_path):
 
 
 @app.post("/generate-upscaled-image/")
-async def upscale_endpoint(file: UploadFile = File(...)):
-    # if file.content_type not in ["image/jpeg", "image/png"]:
-    #     raise HTTPException(status_code=400, detail="Invalid file type")
+async def upscale_endpoint(file: UploadFile = File(None), url: str = Form(None)):
+    if file is None and url is None:
+        raise HTTPException(status_code=400, detail="No image provided. Provide either a file or a URL.")
 
+    if file:
+        contents = await file.read()
+        image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+        with open(image_path, "wb") as f:
+            f.write(contents)
+    elif url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        raise HTTPException(status_code=400, detail="Unable to download image from URL")
+                    contents = await response.read()
+                    image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+                    with open(image_path, "wb") as f:
+                        f.write(contents)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error downloading image: {str(e)}")
 
-    contents = await file.read()
-    image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
-
-    with open(image_path, "wb") as f:
-        f.write(contents)
-
-    upscale_image_io = upscale_image(image_path)
+    upscale_image_io = await upscale_image(image_path)
     if upscale_image_io is None:
         raise HTTPException(status_code=500, detail="Error in upscaling image")
 
@@ -123,17 +120,39 @@ async def upscale_endpoint(file: UploadFile = File(...)):
 
     return StreamingResponse(upscale_image_io, media_type="image/png")
 
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
 
-    cropped_path = auto_crop(file_path)
-    if cropped_path is None:
-        raise HTTPException(status_code=500, detail="Error in cropping image")
+@app.post("/check-face-validations/")
+async def upscale_endpoint(file: UploadFile = File(None), url: str = Form(None)):
+    if file is None and url is None:
+        raise HTTPException(status_code=400, detail="No image provided. Provide either a file or a URL.")
 
-    return FileResponse(cropped_path)
+    if file:
+        contents = await file.read()
+        image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+        with open(image_path, "wb") as f:
+            f.write(contents)
+    elif url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        raise HTTPException(status_code=400, detail="Unable to download image from URL")
+                    contents = await response.read()
+                    image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+                    with open(image_path, "wb") as f:
+                        f.write(contents)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error downloading image: {str(e)}")
+
+    face_validation = await checkfacestraight(image_path)
+
+    os.remove(image_path)
+
+    print(face_validation)
+
+    return face_validation
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8002)
