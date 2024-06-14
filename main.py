@@ -9,7 +9,7 @@ import cv2
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import StreamingResponse, FileResponse
 import aiohttp
-from validations import checkfacestraight
+from validations import checkFaceSimilarity, checkfacevalidation
 
 app = FastAPI()
 
@@ -122,7 +122,7 @@ async def upscale_endpoint(file: UploadFile = File(None), url: str = Form(None))
 
 
 @app.post("/check-face-validations/")
-async def upscale_endpoint(file: UploadFile = File(None), url: str = Form(None)):
+async def face_validation_endpoint(file: UploadFile = File(None), url: str = Form(None)):
     if file is None and url is None:
         raise HTTPException(status_code=400, detail="No image provided. Provide either a file or a URL.")
 
@@ -144,13 +144,57 @@ async def upscale_endpoint(file: UploadFile = File(None), url: str = Form(None))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error downloading image: {str(e)}")
 
-    is_straight, res = await checkfacestraight(image_path)
+    is_straight, res = await checkfacevalidation(image_path)
 
     os.remove(image_path)
 
     return is_straight, res
 
 
+@app.post("/check-face-similarity/")
+async def face_similarity_endpoint(file1: UploadFile = File(None), file2: UploadFile = File(None), url1: str = Form(None), url2: str = Form(None)):
+    if (file1 is None or file2 is None) and (url1 is None or url2 is None):
+        raise HTTPException(status_code=400, detail="Provide either two files or two URLs.")
+
+    img1_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+    img2_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+
+    if file1 and file2:
+        contents1 = await file1.read()
+        with open(img1_path, "wb") as f:
+            f.write(contents1)
+
+        contents2 = await file2.read()
+        with open(img2_path, "wb") as f:
+            f.write(contents2)
+
+    elif url1 and url2:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url1) as response1:
+                    if response1.status != 200:
+                        raise HTTPException(status_code=400, detail="Unable to download image 1 from URL")
+                    contents1 = await response1.read()
+                    with open(img1_path, "wb") as f:
+                        f.write(contents1)
+
+                async with session.get(url2) as response2:
+                    if response2.status != 200:
+                        raise HTTPException(status_code=400, detail="Unable to download image 2 from URL")
+                    contents2 = await response2.read()
+                    with open(img2_path, "wb") as f:
+                        f.write(contents2)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error downloading images: {str(e)}")
+
+    try:
+        is_same = await checkFaceSimilarity(img1_path, img2_path)
+    finally:
+        os.remove(img1_path)
+        os.remove(img2_path)
+
+    return is_same
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="0.0.0.0", port=8004)
