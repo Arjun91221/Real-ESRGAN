@@ -52,7 +52,7 @@ def load_models_esrgan():
         channel_multiplier=2,
         bg_upsampler=upsampler)
 
-def upscale_image(image_path):
+async def upscale_image(image_path):
     if upsampler is None or face_enhancer is None:
         load_models_esrgan()
 
