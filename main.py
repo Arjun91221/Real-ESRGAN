@@ -32,7 +32,7 @@ def load_models_esrgan():
     tile = 64
     tile_pad = 10
     pre_pad = 0
-    outscale = 2.5
+    outscale = 1.5
 
     upsampler = RealESRGANer(
         scale=netscale,
