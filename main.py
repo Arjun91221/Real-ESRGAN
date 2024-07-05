@@ -1,3 +1,4 @@
+import base64
 from io import BytesIO
 import os
 import uuid
@@ -10,6 +11,10 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import StreamingResponse, FileResponse
 import aiohttp
 from validations import checkFaceSimilarity, checkfacevalidation
+from pydantic import BaseModel
+import io
+from PIL import Image
+from typing import List
 
 app = FastAPI()
 
@@ -18,6 +23,58 @@ current_directory = os.path.dirname(__file__)
 UPLOAD_DIR = f"{current_directory}/uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
+
+
+class Base64Image(BaseModel):
+    base64_string: str
+
+async def fetch_image_from_url(url: str) -> io.BytesIO:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                raise HTTPException(status_code=400, detail="Invalid URL")
+            return BytesIO(await response.read())
+
+def decode_base64_image(base64_string: str) -> BytesIO:
+    image_data = base64.b64decode(base64_string)
+    return BytesIO(image_data)
+
+@app.post("/image-to-base64/")
+async def image_to_base64(file: UploadFile = File(None), url: str = Form(None)):
+    if file is None and url is None:
+        raise HTTPException(status_code=400, detail="No image file or URL provided")
+
+    if file:
+        contents = await file.read()
+        image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+        with open(image_path, "wb") as f:
+            f.write(contents)
+    else:
+        image_io = await fetch_image_from_url(url)
+        image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+        with open(image_path, "wb") as f:
+            f.write(image_io.getvalue())
+
+    with open(image_path, "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+
+    os.remove(image_path)
+
+    return encoded_string
+
+@app.post("/base64-to-image/")
+async def base64_to_image(base64_image: Base64Image):
+    try:
+        base64_string = base64_image.base64_string
+        image_data = base64.b64decode(base64_string)
+        image = Image.open(BytesIO(image_data))
+
+        image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+        image.save(image_path)
+
+        return StreamingResponse(open(image_path, "rb"), media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 string: {e}")
 
 # Initialize global variables
 upsampler = None
@@ -76,124 +133,80 @@ async def upscale_image(image_path):
         if img_mode == 'RGBA':  # RGBA images should be saved in png format
             extension = 'png'
 
-        _, buffer = cv2.imencode(f'.{extension}', output)
-        image_io = BytesIO(buffer)
-        image_io.seek(0)
-        return image_io
-
+        output_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
 
         cv2.imwrite(output_path, output)
         print("output:", output_path)
         return output_path
 
-
-
 @app.post("/generate-upscaled-image/")
-async def upscale_endpoint(file: UploadFile = File(None), url: str = Form(None)):
-    if file is None and url is None:
-        raise HTTPException(status_code=400, detail="No image provided. Provide either a file or a URL.")
-
-    if file:
-        contents = await file.read()
+async def upscale_endpoint(base64_image: Base64Image):
+    try:
+        image_io = decode_base64_image(base64_image.base64_string)
         image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
         with open(image_path, "wb") as f:
-            f.write(contents)
-    elif url:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        raise HTTPException(status_code=400, detail="Unable to download image from URL")
-                    contents = await response.read()
-                    image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
-                    with open(image_path, "wb") as f:
-                        f.write(contents)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Error downloading image: {str(e)}")
+            f.write(image_io.getvalue())
 
-    upscale_image_io = await upscale_image(image_path)
-    if upscale_image_io is None:
-        raise HTTPException(status_code=500, detail="Error in upscaling image")
+        upscaled_image_path = upscale_image(image_path)
 
+        with open(upscaled_image_path, "rb") as upscaled_image_file:
+            upscaled_image_base64 = base64.b64encode(upscaled_image_file.read()).decode('utf-8')
 
-    os.remove(image_path)
+        os.remove(image_path)
+        os.remove(upscaled_image_path)
 
-    return StreamingResponse(upscale_image_io, media_type="image/png")
+        return upscaled_image_base64
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 string: {e}")
 
 
 @app.post("/check-face-validations/")
-async def face_validation_endpoint(file: UploadFile = File(None), url: str = Form(None)):
-    if file is None and url is None:
-        raise HTTPException(status_code=400, detail="No image provided. Provide either a file or a URL.")
-
-    if file:
-        contents = await file.read()
+async def face_validation_endpoint(base64_image: Base64Image):
+    try:
+        image_io = decode_base64_image(base64_image.base64_string)
         image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
         with open(image_path, "wb") as f:
-            f.write(contents)
-    elif url:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        raise HTTPException(status_code=400, detail="Unable to download image from URL")
-                    contents = await response.read()
-                    image_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
-                    with open(image_path, "wb") as f:
-                        f.write(contents)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Error downloading image: {str(e)}")
+            f.write(image_io.getvalue())
 
-    is_straight, res = await checkfacevalidation(image_path)
+        is_straight, res = await checkfacevalidation(image_path)
 
-    os.remove(image_path)
+        os.remove(image_path)
 
-    return is_straight, res
+        return is_straight, res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 string: {e}")
+
 
 
 @app.post("/check-face-similarity/")
-async def face_similarity_endpoint(file1: UploadFile = File(None), file2: UploadFile = File(None), url1: str = Form(None), url2: str = Form(None)):
-    if (file1 is None or file2 is None) and (url1 is None or url2 is None):
-        raise HTTPException(status_code=400, detail="Provide either two files or two URLs.")
-
-    img1_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
-    img2_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
-
-    if file1 and file2:
-        contents1 = await file1.read()
-        with open(img1_path, "wb") as f:
-            f.write(contents1)
-
-        contents2 = await file2.read()
-        with open(img2_path, "wb") as f:
-            f.write(contents2)
-
-    elif url1 and url2:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url1) as response1:
-                    if response1.status != 200:
-                        raise HTTPException(status_code=400, detail="Unable to download image 1 from URL")
-                    contents1 = await response1.read()
-                    with open(img1_path, "wb") as f:
-                        f.write(contents1)
-
-                async with session.get(url2) as response2:
-                    if response2.status != 200:
-                        raise HTTPException(status_code=400, detail="Unable to download image 2 from URL")
-                    contents2 = await response2.read()
-                    with open(img2_path, "wb") as f:
-                        f.write(contents2)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Error downloading images: {str(e)}")
-
+async def face_similarity_endpoint(images: List[Base64Image]):
     try:
-        is_same = await checkFaceSimilarity(img1_path, img2_path)
-    finally:
-        os.remove(img1_path)
-        os.remove(img2_path)
+        if len(images) != 2:
+            raise HTTPException(status_code=400, detail="Two images are required")
 
-    return is_same
+        # Decode and save the original image
+        img_1 = decode_base64_image(images[0].base64_string)
+        image_1_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+        with open(image_1_path, "wb") as f:
+            f.write(img_1.getvalue())
+
+        # Decode and save the background image
+        img_2 = decode_base64_image(images[1].base64_string)
+        image_2_path = f"{UPLOAD_DIR}/{str(uuid.uuid4())}.png"
+        with open(image_2_path, "wb") as f:
+            f.write(img_2.getvalue())
+
+        is_same = await checkFaceSimilarity(image_1_path, image_2_path)
+
+        # Cleanup
+        os.remove(image_1_path)
+        os.remove(image_2_path)
+
+        return is_same
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 string: {e}")
+
 
 if __name__ == "__main__":
     import uvicorn
