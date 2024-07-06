@@ -147,7 +147,7 @@ async def upscale_endpoint(base64_image: Base64Image):
         with open(image_path, "wb") as f:
             f.write(image_io.getvalue())
 
-        upscaled_image_path = upscale_image(image_path)
+        upscaled_image_path = await upscale_image(image_path)
 
         with open(upscaled_image_path, "rb") as upscaled_image_file:
             upscaled_image_base64 = base64.b64encode(upscaled_image_file.read()).decode('utf-8')
