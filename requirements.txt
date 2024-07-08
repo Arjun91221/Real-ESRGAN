@@ -7,3 +7,9 @@ Pillow
 torch>=1.7
 torchvision
 tqdm
+uvicorn
+fastapi
+face-recognition
+onnxruntime
+mediapipe
+aiohttp
